@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>{{{ PRODUCT_NAME }}}</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0d12; font-family: system-ui, Segoe UI, sans-serif; color: #eee; }
+    #unity-canvas { width: 100%; height: 100%; display: block; background: #0b0d12; outline: none; }
+    #loader { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; background: radial-gradient(circle at 50% 40%, #1b2030, #0b0d12 70%); }
+    #loader h1 { margin: 0; font-size: clamp(32px, 6vw, 64px); letter-spacing: 6px; font-weight: 800; }
+    #loader h1 span { color: #ff7a2f; }
+    #bar { width: min(440px, 80vw); height: 10px; background: #222833; border-radius: 5px; overflow: hidden; }
+    #fill { height: 100%; width: 0; background: #ff7a2f; transition: width .2s; }
+    #hint { opacity: .7; font-size: 15px; text-align: center; padding: 0 16px; }
+    #err { color: #ff6b6b; max-width: 600px; text-align: center; padding: 0 16px; }
+  </style>
+</head>
+<body>
+  <canvas id="unity-canvas" tabindex="-1"></canvas>
+  <div id="loader">
+    <h1>FRONTLINE <span>ARENA</span></h1>
+    <div id="bar"><div id="fill"></div></div>
+    <div id="hint">Lade Spiel … (Maus &amp; Tastatur benötigt)</div>
+    <div id="err"></div>
+  </div>
+  <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+  <script>
+    var canvas = document.querySelector("#unity-canvas");
+    var config = {
+      dataUrl: "Build/{{{ DATA_FILENAME }}}",
+      frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_THREADS
+      workerUrl: "Build/{{{ WORKER_FILENAME }}}",
+#endif
+#if USE_WASM
+      codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#endif
+#if MEMORY_FILENAME
+      memoryUrl: "Build/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+      symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+      productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+      productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+      devicePixelRatio: 1
+    };
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      document.querySelector("#hint").textContent = "Hinweis: Das Spiel braucht Maus und Tastatur (PC).";
+    }
+    createUnityInstance(canvas, config, function (p) {
+      document.querySelector("#fill").style.width = (100 * p) + "%";
+    }).then(function () {
+      document.querySelector("#loader").style.display = "none";
+      canvas.focus();
+    }).catch(function (m) {
+      document.querySelector("#err").textContent = m;
+    });
+    canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    canvas.addEventListener("mousedown", function () { canvas.focus(); });
+  </script>
+</body>
+</html>
