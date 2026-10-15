@@ -11,10 +11,39 @@ public class GameManager : MonoBehaviour
     static bool autoStart;
     static int difficulty = 1;
     static readonly string[] DiffNames = { "Leicht", "Normal", "Schwer" };
-    static readonly float[] DiffHp = { 0.7f, 1f, 1.35f };
-    static readonly float[] DiffDmg = { 0.55f, 1f, 1.4f };
-    static readonly float[] DiffCount = { 0.8f, 1f, 1.25f };
+    static readonly float[] DiffHp = { 0.7f, 0.9f, 1.15f };
+    static readonly float[] DiffDmg = { 0.45f, 0.75f, 1.1f };
+    static readonly float[] DiffCount = { 0.7f, 0.9f, 1.15f };
     public float DmgTakenMul => DiffDmg[difficulty];
+
+    // loadout chosen in the armory
+    public static int Primary
+    {
+        get { int v = PlayerPrefs.GetInt("prim", Arsenal.Find("M4A1")); return Arsenal.Primaries.Contains(v) ? v : Arsenal.Find("M4A1"); }
+        set { PlayerPrefs.SetInt("prim", value); PlayerPrefs.Save(); }
+    }
+    public static int Secondary
+    {
+        get { int v = PlayerPrefs.GetInt("sec", Arsenal.Find("P9")); return Arsenal.Secondaries.Contains(v) ? v : Arsenal.Find("P9"); }
+        set { PlayerPrefs.SetInt("sec", value); PlayerPrefs.Save(); }
+    }
+
+    // weapon pickup prompt
+    public Pickup PromptTarget { get; private set; }
+    float promptTime = -1f;
+    public void ShowPrompt(Pickup p)
+    {
+        if (PromptTarget != null && PromptTarget != p && promptTime == Time.frameCount && Player.I != null &&
+            (PromptTarget.transform.position - Player.I.transform.position).sqrMagnitude < (p.transform.position - Player.I.transform.position).sqrMagnitude)
+            return;
+        PromptTarget = p;
+        promptTime = Time.frameCount;
+    }
+
+    public void DropWeapon(int id, Vector3 pos, float life = 60f)
+    {
+        Pickup.Create(PType.Weapon, pos + Vector3.up * 0.5f, id, life);
+    }
 
     World world;
     Camera menuCam;
@@ -41,7 +70,7 @@ public class GameManager : MonoBehaviour
     // UI
     float S = 1f;
     GUIStyle sTitle, sBig, sHuge, sMed, sSmall, sBtn, sSlider, sThumb;
-    Texture2D vignetteTex, scopeTex, arrowTex, btnTex, btnHoverTex, ringTex;
+    Texture2D vignetteTex, scopeTex, acogTex, arrowTex, btnTex, btnHoverTex, ringTex;
     static readonly Color Accent = new Color(1f, 0.48f, 0.18f);
     static readonly Color Gold = new Color(1f, 0.82f, 0.3f);
 
@@ -59,6 +88,7 @@ public class GameManager : MonoBehaviour
         I = this;
         Enemy.All.Clear();
         Pickup.All.Clear();
+        Grenade.All.Clear();
         Time.timeScale = 1f;
         AudioListener.pause = false;
         SFX.Init();
@@ -73,9 +103,10 @@ public class GameManager : MonoBehaviour
 
         var cg = new GameObject("MenuCam");
         menuCam = cg.AddComponent<Camera>();
-        menuCam.farClipPlane = 450f;
-        menuCam.fieldOfView = 60f;
+        menuCam.farClipPlane = 1400f;
+        menuCam.fieldOfView = 55f;
         cg.AddComponent<AudioListener>();
+        cg.AddComponent<PostFX>();
         UpdateMenuCam(0f);
 
         MakeTextures();
@@ -203,12 +234,39 @@ public class GameManager : MonoBehaviour
             if (comboT <= 0f) combo = 0;
             UpdateWaves(dt);
             UpdateRespawns();
+            UpdateAmbience(dt);
         }
         else if (state == State.Paused)
         {
             if (Input.GetKeyDown(KeyCode.P)) Resume();
         }
     }
+
+    float ambT = 5f, birdT = 3f;
+
+    // Distant battle noise and birds for atmosphere.
+    void UpdateAmbience(float dt)
+    {
+        ambT -= dt;
+        if (ambT <= 0f)
+        {
+            ambT = Random.Range(3f, 11f);
+            if (Random.value < 0.75f)
+            {
+                int n = Random.Range(1, 6);
+                for (int i = 0; i < n; i++) Invoke(nameof(FarShot), i * Random.Range(0.08f, 0.2f));
+            }
+            else SFX.Play2D("farboom", Random.Range(0.25f, 0.5f), Random.Range(0.7f, 1f));
+        }
+        birdT -= dt;
+        if (birdT <= 0f)
+        {
+            birdT = Random.Range(4f, 14f);
+            if (!waveActive || Enemy.All.Count < 3) SFX.Play2D("bird", Random.Range(0.15f, 0.35f), Random.Range(0.85f, 1.2f));
+        }
+    }
+
+    void FarShot() => SFX.Play2D("far", Random.Range(0.12f, 0.3f), Random.Range(0.85f, 1.1f));
 
     void UpdateMenuCam(float dt)
     {
@@ -230,10 +288,10 @@ public class GameManager : MonoBehaviour
             return;
         }
         spawnT -= dt;
-        int cap = Mathf.Min(10 + wave * 2, 28);
+        int cap = Mathf.Min(5 + wave, 16);
         if (queue.Count > 0 && spawnT <= 0f && Enemy.All.Count < cap)
         {
-            spawnT = Mathf.Max(0.35f, 1.4f - wave * 0.08f);
+            spawnT = Mathf.Max(0.9f, 2.2f - wave * 0.08f);
             SpawnNext();
         }
         if (queue.Count == 0 && Enemy.All.Count == 0) WaveCleared();
@@ -244,7 +302,7 @@ public class GameManager : MonoBehaviour
         wave++;
         waveActive = true;
         queue.Clear();
-        int n = Mathf.RoundToInt((5 + wave * 3) * DiffCount[difficulty]);
+        int n = Mathf.Max(3, Mathf.RoundToInt((3 + wave * 2) * DiffCount[difficulty]));
         for (int i = 0; i < n; i++) queue.Add(PickType());
         for (int i = 0; i < queue.Count; i++)
         {
@@ -254,15 +312,15 @@ public class GameManager : MonoBehaviour
         if (wave % 5 == 0)
             for (int b = 0; b < wave / 5; b++) queue.Insert(Mathf.Max(0, queue.Count - 3 - b * 4), EType.Boss);
         spawnT = 0f;
-        Announce(wave % 5 == 0 ? "WELLE " + wave + " – BOSSWELLE" : "WELLE " + wave, wave % 5 == 0 ? new Color(1f, 0.3f, 0.25f) : Color.white);
+        Announce(wave % 5 == 0 ? "WELLE " + wave + " - BOSSWELLE" : "WELLE " + wave, wave % 5 == 0 ? new Color(1f, 0.3f, 0.25f) : Color.white);
         SFX.Play2D("wave", 0.8f);
     }
 
     EType PickType()
     {
         float r = Random.value;
-        if (wave >= 3 && r < Mathf.Min(0.1f + wave * 0.015f, 0.28f)) return EType.Brute;
-        if (wave >= 2 && r < 0.55f) return EType.Soldier;
+        if (wave >= 4 && r < Mathf.Min(0.06f + wave * 0.012f, 0.22f)) return EType.Brute;
+        if (wave >= 2 && r < 0.5f) return EType.Soldier;
         return EType.Runner;
     }
 
@@ -274,7 +332,7 @@ public class GameManager : MonoBehaviour
         if (t == EType.Boss)
         {
             boss = e;
-            Announce("DER BOSS IST DA!", new Color(1f, 0.25f, 0.2f));
+            Announce("JUGGERNAUT GESICHTET!", new Color(1f, 0.25f, 0.2f));
             SFX.Play2D("boss", 1f);
         }
     }
@@ -286,7 +344,7 @@ public class GameManager : MonoBehaviour
             var off = Quaternion.Euler(0, Random.Range(0f, 360f), 0) * Vector3.forward * 5f;
             var c = World.ToCell(pos + off);
             if (!world.IsFree(c.x, c.y)) continue;
-            var e = Enemy.Spawn(EType.Runner, World.CellCenter(c.x, c.y) + Vector3.up * 0.1f, wave, DiffHp[difficulty]);
+            var cp = World.CellCenter(c.x, c.y); var e = Enemy.Spawn(EType.Runner, new Vector3(cp.x, World.GroundY(cp) + 0.1f, cp.z), wave, DiffHp[difficulty]);
             Fx.Smoke(e.transform.position + Vector3.up, 2.5f, 0.8f, 0.6f);
         }
     }
@@ -304,7 +362,7 @@ public class GameManager : MonoBehaviour
             fallback = s;
             if (Physics.Linecast(s + Vector3.up * 1.6f, Player.I.EyePos, GA.MaskWorld)) break;
         }
-        return fallback + Vector3.up * 0.1f;
+        return new Vector3(fallback.x, World.GroundY(fallback) + 0.1f, fallback.z);
     }
 
     void WaveCleared()
@@ -345,11 +403,15 @@ public class GameManager : MonoBehaviour
             Pickup.Create(PType.Ammo, pos + Vector3.forward * 1.5f, 0, 40f);
             Announce("BOSS BESIEGT!", Gold);
         }
-        else if (Random.value < 0.22f)
+        else if (Random.value < 0.35f)
         {
             float r = Random.value;
-            Pickup.Create(r < 0.4f ? PType.Health : r < 0.85f ? PType.Ammo : PType.Armor, pos, 0, 20f);
+            Pickup.Create(r < 0.4f ? PType.Health : r < 0.85f ? PType.Ammo : PType.Armor, pos + e.transform.right, 0, 25f);
         }
+        if (e.type != EType.Boss && Random.value < 0.4f)
+            DropWeapon(e.weaponId, e.transform.position - e.transform.right * 0.6f, 35f);
+        else if (e.type == EType.Boss)
+            DropWeapon(Arsenal.Random(WCat.Launcher, WCat.Sniper), e.transform.position + Vector3.forward, 60f);
     }
 
     // ---------------------------------------------------------------- pickups
@@ -363,12 +425,24 @@ public class GameManager : MonoBehaviour
         }
         for (int i = 0; i < world.weaponSpots.Count; i++)
             CreateMapPickup(world.weaponSpots[i], PType.Weapon, world.weaponIds[i]);
+        foreach (var c in world.crateSpots)
+            CreateMapPickup(c, PType.Weapon, -1);
     }
 
+    static int RandomMapWeapon()
+    {
+        float r = Random.value;
+        if (r < 0.08f) return Arsenal.Random(WCat.Launcher);
+        if (r < 0.2f) return Arsenal.Random(WCat.Pistol);
+        return Arsenal.Primaries[Random.Range(0, Arsenal.Primaries.Count)];
+    }
+
+    // w = -1 means "random weapon each time".
     void CreateMapPickup(Vector3 pos, PType t, int w)
     {
-        var pk = Pickup.Create(t, pos + Vector3.up * 0.9f, w);
-        pk.onTaken = () => respawns.Add(new Respawn { time = Time.time + (t == PType.Weapon ? 45f : 30f), pos = pos, type = t, weapon = w });
+        int id = w < 0 ? RandomMapWeapon() : w;
+        var pk = Pickup.Create(t, pos + Vector3.up * 0.9f, id);
+        pk.onTaken = () => respawns.Add(new Respawn { time = Time.time + (t == PType.Weapon ? 40f : 25f), pos = pos, type = t, weapon = w });
     }
 
     void UpdateRespawns()
@@ -418,15 +492,42 @@ public class GameManager : MonoBehaviour
             {
                 float dx = x - SZ / 2f + 0.5f, dy = y - SZ / 2f + 0.5f;
                 float d = Mathf.Sqrt(dx * dx + dy * dy) / (SZ / 2f);
-                float a = Mathf.SmoothStep(0.94f, 0.97f, d);
-                bool line = (Mathf.Abs(dx) < 1.2f || Mathf.Abs(dy) < 1.2f) && d > 0.04f;
-                bool thick = (Mathf.Abs(dx) < 3f || Mathf.Abs(dy) < 3f) && d > 0.45f;
-                if (line || thick) a = 1f;
+                // clear lens with a soft dark edge, black housing outside
+                float a = Mathf.SmoothStep(0.88f, 0.97f, d) * 0.7f + (d > 0.97f ? 1f : 0f);
+                a = Mathf.Clamp01(a);
+                bool line = (Mathf.Abs(dx) < 0.9f || Mathf.Abs(dy) < 0.9f) && d < 0.97f;
+                bool thick = (Mathf.Abs(dx) < 3f || Mathf.Abs(dy) < 3f) && d > 0.5f;
+                bool dot = false;
+                for (int k = 1; k <= 5; k++)
+                {
+                    float m = k * 18f;
+                    if ((Mathf.Abs(dx) < 2.2f && Mathf.Abs(Mathf.Abs(dy) - m) < 2.2f) || (Mathf.Abs(dy) < 2.2f && Mathf.Abs(Mathf.Abs(dx) - m) < 2.2f)) dot = true;
+                }
+                if (line || thick || dot) a = 1f;
                 var c = new Color(0, 0, 0, a);
-                if (d < 0.012f) c = new Color(1f, 0.1f, 0.1f, 1f);
+                if (d < 0.006f) c = new Color(1f, 0.1f, 0.1f, 1f);
                 scopeTex.SetPixel(x, y, c);
             }
         scopeTex.Apply();
+
+        acogTex = new Texture2D(SZ, SZ, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+        for (int y = 0; y < SZ; y++)
+            for (int x = 0; x < SZ; x++)
+            {
+                float dx = x - SZ / 2f + 0.5f, dy = y - SZ / 2f + 0.5f;
+                float d = Mathf.Sqrt(dx * dx + dy * dy) / (SZ / 2f);
+                float a = Mathf.Clamp01(Mathf.SmoothStep(0.85f, 0.96f, d) * 0.7f + (d > 0.96f ? 1f : 0f));
+                var c = new Color(0, 0, 0, a);
+                // red chevron with apex at the center
+                float cy = -dy;
+                if (cy >= 0f && cy < 22f && Mathf.Abs(Mathf.Abs(dx) - cy * 0.8f) < 2.2f) c = new Color(1f, 0.15f, 0.05f, 1f);
+                // post and bullet-drop stadia below
+                if (Mathf.Abs(dx) < 1f && cy > 24f && cy < 150f) c = new Color(0, 0, 0, 1f);
+                for (int k = 1; k <= 4; k++)
+                    if (Mathf.Abs(cy - (30f + k * 25f)) < 1f && Mathf.Abs(dx) < 18f - k * 3f) c = new Color(0, 0, 0, 1f);
+                acogTex.SetPixel(x, y, c);
+            }
+        acogTex.Apply();
 
         arrowTex = new Texture2D(64, 64, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
         for (int y = 0; y < 64; y++)
@@ -566,15 +667,24 @@ public class GameManager : MonoBehaviour
                 PlayerPrefs.Save();
             }
             y += gap;
+            if (Btn(new Rect(x, y, bw, bh), "WAFFENKAMMER")) menuPage = 3;
+            y += gap;
             if (Btn(new Rect(x, y, bw, bh), "STEUERUNG")) menuPage = 1;
             y += gap;
             if (Btn(new Rect(x, y, bw, bh), "EINSTELLUNGEN")) menuPage = 2;
-            y += gap + 20 * S;
+            y += gap + 10 * S;
             Text(new Rect(x, y, 600 * S, 40 * S), "HIGHSCORE:  " + highscore, sMed, Gold);
+            y += 40 * S;
+            Text(new Rect(x, y, 600 * S, 30 * S), "Ausrüstung: " + Arsenal.All[Primary].name + "  +  " + Arsenal.All[Secondary].name, sSmall, new Color(1, 1, 1, 0.7f));
         }
         else if (menuPage == 1)
         {
             DrawControls(x, y);
+            if (Btn(new Rect(x, H - 130 * S, bw, bh), "ZURÜCK")) menuPage = 0;
+        }
+        else if (menuPage == 3)
+        {
+            DrawArmory(x, y, bw);
             if (Btn(new Rect(x, H - 130 * S, bw, bh), "ZURÜCK")) menuPage = 0;
         }
         else
@@ -582,23 +692,74 @@ public class GameManager : MonoBehaviour
             y = DrawSettings(x, y, bw);
             if (Btn(new Rect(x, H - 130 * S, bw, bh), "ZURÜCK")) menuPage = 0;
         }
-        Text(new Rect(x, H - 45 * S, 600 * S, 30 * S), "Gemacht mit Unity  •  Maus & Tastatur", sSmall, new Color(1, 1, 1, 0.45f));
+        Text(new Rect(x, H - 45 * S, 600 * S, 30 * S), "Gemacht mit Unity  |  Maus & Tastatur", sSmall, new Color(1, 1, 1, 0.45f));
     }
 
     void DrawControls(float x, float y)
     {
         string[,] rows =
         {
-            { "WASD", "Bewegen" }, { "Maus", "Zielen" }, { "Linksklick", "Schießen" }, { "Rechtsklick", "Zielen / Zoom" },
-            { "Shift", "Sprinten" }, { "Leertaste", "Springen" }, { "R", "Nachladen" }, { "1 – 5 / Mausrad", "Waffe wechseln" },
-            { "Q", "Letzte Waffe" }, { "M / Tab", "Karte" }, { "Esc / P", "Pause" }
+            { "WASD", "Bewegen" }, { "Maus", "Zielen" }, { "Linksklick", "Schießen" }, { "Rechtsklick", "Visier / Zielfernrohr" },
+            { "Shift", "Sprinten" }, { "Leertaste", "Springen" }, { "R", "Nachladen" }, { "1 / 2 / 3", "Haupt / Pistole / Werfer" },
+            { "E", "Waffe aufnehmen" }, { "Q", "Letzte Waffe" }, { "C / Strg", "Ducken" }, { "G", "Granate werfen" },
+            { "M / Tab", "Karte" }, { "Esc / P", "Pause" }
         };
         for (int i = 0; i < rows.GetLength(0); i++)
         {
             Text(new Rect(x, y, 260 * S, 34 * S), rows[i, 0], sMed, Accent);
-            Text(new Rect(x + 250 * S, y, 300 * S, 34 * S), rows[i, 1], sMed, Color.white);
-            y += 40 * S;
+            Text(new Rect(x + 230 * S, y, 340 * S, 34 * S), rows[i, 1], sMed, Color.white);
+            y += 37 * S;
         }
+    }
+
+    // Loadout selection: primary + pistol, with stats.
+    void DrawArmory(float x, float y, float w)
+    {
+        float bh = 54 * S;
+        Text(new Rect(x, y - 20 * S, w, 30 * S), "HAUPTWAFFE", sSmall, Accent);
+        y += 14 * S;
+        int prim = Arsenal.Primaries.IndexOf(Primary);
+        if (Btn(new Rect(x, y, 60 * S, bh), " <")) Primary = Arsenal.Primaries[(prim - 1 + Arsenal.Primaries.Count) % Arsenal.Primaries.Count];
+        if (Btn(new Rect(x + w - 60 * S, y, 60 * S, bh), " >")) Primary = Arsenal.Primaries[(prim + 1) % Arsenal.Primaries.Count];
+        var pd = Arsenal.All[Primary];
+        var cs = new GUIStyle(sMed) { alignment = TextAnchor.MiddleCenter };
+        Text(new Rect(x + 60 * S, y, w - 120 * S, bh), pd.name, cs, Color.white);
+        y += bh + 6 * S;
+        Text(new Rect(x, y, w, 26 * S), pd.CatName + "  |  " + pd.FireName + "  |  " + SightName(pd.sight), sSmall, new Color(1, 1, 1, 0.65f));
+        y += 30 * S;
+        y = StatBars(x, y, w, pd);
+
+        y += 16 * S;
+        Text(new Rect(x, y, w, 30 * S), "PISTOLE", sSmall, Accent);
+        y += 30 * S;
+        int sec = Arsenal.Secondaries.IndexOf(Secondary);
+        if (Btn(new Rect(x, y, 60 * S, bh), " <")) Secondary = Arsenal.Secondaries[(sec - 1 + Arsenal.Secondaries.Count) % Arsenal.Secondaries.Count];
+        if (Btn(new Rect(x + w - 60 * S, y, 60 * S, bh), " >")) Secondary = Arsenal.Secondaries[(sec + 1) % Arsenal.Secondaries.Count];
+        var sd = Arsenal.All[Secondary];
+        Text(new Rect(x + 60 * S, y, w - 120 * S, bh), sd.name, cs, Color.white);
+        y += bh + 6 * S;
+        y = StatBars(x, y, w, sd);
+        y += 10 * S;
+        Text(new Rect(x, y, w + 60 * S, 26 * S), Arsenal.All.Length + " Waffen - weitere liegen auf der Karte (E zum Aufnehmen)", sSmall, new Color(1, 1, 1, 0.5f));
+    }
+
+    static string SightName(Sight s) => s == Sight.Iron ? "Kimme & Korn" : s == Sight.RedDot ? "Rotpunkt" : s == Sight.Holo ? "Holo-Visier" : s == Sight.Acog ? "ACOG 4x" : "Zielfernrohr";
+
+    float StatBars(float x, float y, float w, WeaponDef d)
+    {
+        float dmg = Mathf.Clamp01(d.dmg * d.pellets / 180f);
+        float rate = Mathf.Clamp01(d.rate / 18f);
+        float acc = Mathf.Clamp01(1f - d.spread / 0.07f);
+        float mag = Mathf.Clamp01(d.mag / 100f);
+        string[] names = { "Schaden", "Feuerrate", "Präzision", "Magazin" };
+        float[] vals = { dmg, rate, acc, mag };
+        for (int i = 0; i < 4; i++)
+        {
+            Text(new Rect(x, y, 160 * S, 24 * S), names[i], sSmall, new Color(1, 1, 1, 0.8f));
+            Bar(new Rect(x + 150 * S, y + 7 * S, w - 150 * S, 10 * S), vals[i], Accent);
+            y += 26 * S;
+        }
+        return y;
     }
 
     float DrawSettings(float x, float y, float w)
@@ -694,15 +855,17 @@ public class GameManager : MonoBehaviour
             GUI.color = Color.white;
         }
 
-        bool scoped = wpn.cur == 3 && wpn.Zoomed && p.cam.fieldOfView < 35f;
-        if (scoped)
+        if (wpn.Scoped && !p.dead)
         {
-            float sz = H;
-            GUI.DrawTexture(new Rect(W / 2 - sz / 2, 0, sz, sz), scopeTex);
-            Box(new Rect(0, 0, W / 2 - sz / 2 + 1, H), Color.black);
-            Box(new Rect(W / 2 + sz / 2 - 1, 0, W / 2 - sz / 2 + 1, H), Color.black);
+            // see-through scope: clear lens in the middle, black housing around it
+            float sz = H * (wpn.Def.sight == Sight.Acog ? 0.9f : 1f);
+            float sx = W / 2 - sz / 2, sy = H / 2 - sz / 2;
+            GUI.DrawTexture(new Rect(sx, sy, sz, sz), wpn.Def.sight == Sight.Acog ? acogTex : scopeTex);
+            Box(new Rect(0, 0, sx + 1, H), Color.black);
+            Box(new Rect(sx + sz - 1, 0, W - sx - sz + 1, H), Color.black);
+            if (sy > 0) { Box(new Rect(0, 0, W, sy + 1), Color.black); Box(new Rect(0, sy + sz - 1, W, H - sy - sz + 1), Color.black); }
         }
-        else if (!p.dead) DrawCrosshair(W, H, wpn);
+        else if (!p.dead && wpn.ads < 0.5f) DrawCrosshair(W, H, wpn);
 
         // hit marker
         if (wpn.hitMarkerT > 0f)
@@ -748,29 +911,47 @@ public class GameManager : MonoBehaviour
         Bar(new Rect(x, y + 96 * S, bw, 6 * S), p.stamina, new Color(1f, 0.85f, 0.35f, 0.8f));
 
         // ammo (bottom-right)
-        var d0 = wpn.Cur;
-        float ax = W - 400 * S, ay = H - 170 * S;
-        Box(new Rect(ax - 12 * S, ay - 12 * S, 382 * S, 152 * S), new Color(0, 0, 0, 0.45f));
-        Text(new Rect(ax, ay - 4 * S, 360 * S, 30 * S), d0.name.ToUpper(), sSmall, new Color(1, 1, 1, 0.8f));
-        string reserveTxt = d0.reserveMax < 0 ? "∞" : wpn.reserve[wpn.cur].ToString();
+        var g0 = wpn.Cur;
+        var d0 = g0.d;
+        float ax = W - 420 * S, ay = H - 200 * S;
+        Box(new Rect(ax - 12 * S, ay - 12 * S, 402 * S, 182 * S), new Color(0, 0, 0, 0.45f));
+        Text(new Rect(ax, ay - 4 * S, 380 * S, 30 * S), d0.name.ToUpper(), sSmall, Color.white);
+        var rs = new GUIStyle(sSmall) { alignment = TextAnchor.UpperRight };
+        Text(new Rect(ax, ay - 4 * S, 378 * S, 30 * S), d0.FireName, rs, new Color(1, 1, 1, 0.55f));
+        string reserveTxt = d0.reserve < 0 ? "--" : g0.reserve.ToString();
         var bigL = new GUIStyle(sBig) { alignment = TextAnchor.MiddleLeft, fontSize = (int)(54 * S) };
-        Text(new Rect(ax, ay + 22 * S, 200 * S, 60 * S), wpn.mag[wpn.cur].ToString(), bigL, wpn.mag[wpn.cur] == 0 ? new Color(1f, 0.3f, 0.3f) : Color.white);
+        Text(new Rect(ax, ay + 22 * S, 200 * S, 60 * S), g0.mag.ToString(), bigL, g0.mag == 0 ? new Color(1f, 0.3f, 0.3f) : Color.white);
         var midL = new GUIStyle(sMed) { alignment = TextAnchor.MiddleLeft };
-        Text(new Rect(ax + 110 * S, ay + 30 * S, 200 * S, 50 * S), "/ " + reserveTxt, midL, new Color(1, 1, 1, 0.6f));
+        Text(new Rect(ax + (g0.mag >= 100 ? 120 : 92) * S, ay + 30 * S, 200 * S, 50 * S), "/ " + reserveTxt, midL, new Color(1, 1, 1, 0.6f));
         if (wpn.reloading)
         {
-            Bar(new Rect(ax, ay + 86 * S, 356 * S, 6 * S), wpn.ReloadProgress, Accent);
+            Bar(new Rect(ax, ay + 86 * S, 376 * S, 6 * S), wpn.ReloadProgress, Accent);
             Text(new Rect(ax + 220 * S, ay + 40 * S, 200 * S, 30 * S), "NACHLADEN", sSmall, Accent);
         }
-        else if (wpn.mag[wpn.cur] == 0 && !wpn.HasReserve(wpn.cur))
+        else if (g0.mag == 0 && !wpn.HasReserve(g0))
             Text(new Rect(ax + 200 * S, ay + 40 * S, 200 * S, 30 * S), "KEINE MUNITION", sSmall, new Color(1f, 0.3f, 0.3f));
-        for (int i = 0; i < 5; i++)
+        string[] slotNames = { "HAUPT", "PISTOLE", "WERFER" };
+        for (int i = 0; i < 3; i++)
         {
-            var r = new Rect(ax + i * 72 * S, ay + 100 * S, 66 * S, 30 * S);
-            bool own = wpn.owned[i];
-            Box(r, i == wpn.cur ? new Color(Accent.r, Accent.g, Accent.b, 0.9f) : own ? new Color(1, 1, 1, 0.18f) : new Color(1, 1, 1, 0.05f));
-            var cs = new GUIStyle(sSmall) { alignment = TextAnchor.MiddleCenter };
-            Text(r, (i + 1).ToString(), cs, own ? (i == wpn.cur ? Color.black : Color.white) : new Color(1, 1, 1, 0.25f));
+            var r = new Rect(ax + i * 126 * S, ay + 100 * S, 120 * S, 58 * S);
+            var gs2 = wpn.slots[i];
+            bool own = gs2 != null;
+            Box(r, i == wpn.cur ? new Color(Accent.r, Accent.g, Accent.b, 0.9f) : own ? new Color(1, 1, 1, 0.15f) : new Color(1, 1, 1, 0.05f));
+            var cs = new GUIStyle(sSmall) { alignment = TextAnchor.UpperCenter, fontSize = Mathf.Max(7, (int)(15 * S)) };
+            Color tc = own ? (i == wpn.cur ? Color.black : Color.white) : new Color(1, 1, 1, 0.3f);
+            Text(new Rect(r.x, r.y + 4 * S, r.width, 24 * S), (i + 1) + "  " + slotNames[i], cs, tc);
+            Text(new Rect(r.x, r.y + 28 * S, r.width, 24 * S), own ? gs2.d.name : "—", cs, tc);
+        }
+
+        // pickup prompt
+        if (PromptTarget != null && promptTime >= Time.frameCount - 1)
+        {
+            var pd = Arsenal.All[PromptTarget.weapon];
+            var ps = new GUIStyle(sMed) { alignment = TextAnchor.MiddleCenter };
+            Box(new Rect(W / 2 - 300 * S, H * 0.64f, 600 * S, 70 * S), new Color(0, 0, 0, 0.55f));
+            Text(new Rect(W / 2 - 300 * S, H * 0.64f + 4 * S, 600 * S, 36 * S), "[E]  " + pd.name + " aufnehmen", ps, Color.white);
+            var ss = new GUIStyle(sSmall) { alignment = TextAnchor.MiddleCenter };
+            Text(new Rect(W / 2 - 300 * S, H * 0.64f + 38 * S, 600 * S, 28 * S), pd.CatName + "  |  " + SightName(pd.sight) + "  |  Magazin " + pd.mag, ss, new Color(1, 1, 1, 0.65f));
         }
 
         // top center info
@@ -801,12 +982,43 @@ public class GameManager : MonoBehaviour
         if (boss != null && !boss.dead)
         {
             float bwid = 640 * S, bx = W / 2 - bwid / 2, by = ty + 10 * S;
-            Text(new Rect(bx, by, bwid, 30 * S), "BOSS", cTop, new Color(1f, 0.3f, 0.25f));
+            Text(new Rect(bx, by, bwid, 30 * S), "JUGGERNAUT", cTop, new Color(1f, 0.3f, 0.25f));
             Bar(new Rect(bx, by + 34 * S, bwid, 16 * S), boss.hp / boss.maxHp, new Color(0.9f, 0.15f, 0.15f));
         }
 
         DrawMinimap(p);
         DrawFeed(W);
+
+        // grenades: count and incoming warning
+        var gs = new GUIStyle(sSmall) { alignment = TextAnchor.UpperRight };
+        Text(new Rect(W - 420 * S, H - 245 * S, 390 * S, 30 * S), "GRANATEN: " + wpn.grenades + "   [G]", gs, new Color(1, 1, 1, 0.75f));
+        foreach (var g in Grenade.All)
+        {
+            if (g == null) continue;
+            Vector3 d = g.transform.position - p.transform.position;
+            if (d.magnitude > 10f) continue;
+            var sp = p.cam.WorldToScreenPoint(g.transform.position);
+            float gx, gy;
+            if (sp.z > 0)
+            {
+                gx = Mathf.Clamp(sp.x, 60 * S, W - 60 * S);
+                gy = Mathf.Clamp(H - sp.y, 60 * S, H - 60 * S);
+            }
+            else
+            {
+                d.y = 0;
+                float ang = Vector3.SignedAngle(p.transform.forward, d, Vector3.up) * Mathf.Deg2Rad;
+                gx = W / 2 + Mathf.Sin(ang) * H * 0.3f;
+                gy = H / 2 - Mathf.Cos(ang) * H * 0.3f;
+            }
+            float pulse = 0.6f + 0.4f * Mathf.Sin(Time.unscaledTime * 12f);
+            GUI.color = new Color(1f, 0.2f, 0.1f, pulse);
+            GUI.DrawTexture(new Rect(gx - 22 * S, gy - 22 * S, 44 * S, 44 * S), ringTex);
+            GUI.color = Color.white;
+            var cs = new GUIStyle(sMed) { alignment = TextAnchor.MiddleCenter };
+            Text(new Rect(gx - 22 * S, gy - 22 * S, 44 * S, 44 * S), "!", cs, Color.black);
+            Text(new Rect(gx - 100 * S, gy + 24 * S, 200 * S, 30 * S), "GRANATE", new GUIStyle(sSmall) { alignment = TextAnchor.UpperCenter }, new Color(1f, 0.3f, 0.2f));
+        }
 
         // announcement
         float at = Time.unscaledTime - annTime;
@@ -869,7 +1081,7 @@ public class GameManager : MonoBehaviour
             Vector3 d = pk.transform.position - pp;
             if (Mathf.Abs(d.x) > range || Mathf.Abs(d.z) > range) continue;
             Color pc = pk.type == PType.Health ? new Color(1f, 0.3f, 0.3f) : pk.type == PType.Armor ? new Color(0.3f, 0.6f, 1f) :
-                pk.type == PType.Ammo ? new Color(1f, 0.85f, 0.2f) : Weapons.Defs[pk.weapon].glow;
+                pk.type == PType.Ammo ? new Color(1f, 0.85f, 0.2f) : new Color(1f, 0.6f, 0.2f);
             float ds = (pk.type == PType.Weapon ? 9 : 5) * S;
             Box(new Rect(c.x + d.x * ppm - ds / 2, c.y - d.z * ppm - ds / 2, ds, ds), pc);
         }
@@ -911,13 +1123,23 @@ public class GameManager : MonoBehaviour
         for (int i = 0; i < world.weaponSpots.Count; i++)
         {
             var mp = ToMap(world.weaponSpots[i]);
-            var d = Weapons.Defs[world.weaponIds[i]];
+            var d = Arsenal.All[world.weaponIds[i]];
             float s = 18 * S;
-            GUI.color = d.glow;
+            var wc = new Color(1f, 0.55f, 0.2f);
+            GUI.color = wc;
             GUI.DrawTexture(new Rect(mp.x - s / 2, mp.y - s / 2, s, s), ringTex);
             GUI.color = Color.white;
             var ws = new GUIStyle(sSmall) { alignment = TextAnchor.MiddleCenter };
-            Text(new Rect(mp.x - 150 * S, mp.y + 10 * S, 300 * S, 26 * S), d.name, ws, d.glow);
+            Text(new Rect(mp.x - 150 * S, mp.y + 10 * S, 300 * S, 26 * S), d.name, ws, wc);
+        }
+        foreach (var pk in Pickup.All)
+        {
+            if (pk == null || pk.type != PType.Weapon) continue;
+            var mp = ToMap(pk.transform.position);
+            float s = 9 * S;
+            GUI.color = new Color(1f, 0.85f, 0.4f);
+            GUI.DrawTexture(new Rect(mp.x - s / 2, mp.y - s / 2, s, s), ringTex);
+            GUI.color = Color.white;
         }
         foreach (var e in Enemy.All)
         {

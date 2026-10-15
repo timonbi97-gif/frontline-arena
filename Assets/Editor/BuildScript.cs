@@ -25,22 +25,16 @@ public static class BuildScript
         });
         MakeMat("Unlit", "Unlit/Color", null);
         MakeMat("Fx", "Sprites/Default", null);
-        MakeMat("Sky", "Skybox/Procedural", m =>
-        {
-            m.SetFloat("_SunSize", 0.04f);
-            m.SetFloat("_AtmosphereThickness", 0.85f);
-            m.SetColor("_SkyTint", new Color(0.5f, 0.55f, 0.65f));
-            m.SetColor("_GroundColor", new Color(0.55f, 0.58f, 0.62f));
-            m.SetFloat("_Exposure", 1.25f);
-        });
+        MakeMat("Sky", "Frontline/Sky", null);
+        MakeMat("Triplanar", "Frontline/Triplanar", null);
+        MakeMat("Post", "Hidden/Frontline/Post", null);
         AssetDatabase.SaveAssets();
 
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         new GameObject("Game").AddComponent<GameManager>();
         RenderSettings.fog = true;
-        RenderSettings.fogMode = FogMode.Linear;
-        RenderSettings.fogStartDistance = 60f;
-        RenderSettings.fogEndDistance = 230f;
+        RenderSettings.fogMode = FogMode.Exponential;
+        RenderSettings.fogDensity = 0.0026f;
         RenderSettings.skybox = AssetDatabase.LoadAssetAtPath<Material>(MatDir + "/Sky.mat");
         RenderSettings.ambientMode = AmbientMode.Trilight;
         Lightmapping.bakedGI = false;
@@ -73,6 +67,7 @@ public static class BuildScript
         PlayerSettings.WebGL.dataCaching = true;
         PlayerSettings.WebGL.template = "PROJECT:Frontline";
         PlayerSettings.runInBackground = true;
+        PlayerSettings.colorSpace = ColorSpace.Linear;
 
         string outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "docs"));
         var opts = new BuildPlayerOptions
